@@ -251,7 +251,7 @@
         name="Show RMAs"
         inherit_id="sale.sale_order_portal_content"
     >
-        <xpath expr="//div[@id='introduction']/h2[hasclass('my-0')]" position="inside">
+        <xpath expr="//div[@id='introduction']/div[@id='intro_row']" position="inside">
             <span t-if="sale_order.rma_count" class="float-end">
                 <a
                     role="button"
