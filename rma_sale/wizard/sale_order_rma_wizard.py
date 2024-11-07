@@ -76,11 +76,11 @@ class SaleOrderRmaWizard(models.TransientModel):
             self.order_id.message_post(body=_(msg + " has been created."))
         elif len(msg_list) > 1:
             self.order_id.message_post(body=_(msg + " have been created."))
-        rma.message_post_with_view(
+        rma.with_user(self.env.uid).message_post_with_source(
             "mail.message_origin_link",
-            values={"self": rma, "origin": self.order_id},
-            subtype_id=self.env.ref("mail.mt_note").id,
-        )
+            render_values={"self": rma, "origin": self.order_id},
+            subtype_id=self.env["ir.model.data"]._xmlid_to_res_id("mail.mt_note"),
+            )
         return rma
 
     def create_and_open_rma(self):

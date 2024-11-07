@@ -10,7 +10,6 @@
                     name="action_create_rma"
                     type="object"
                     string="Create RMA"
-                    invisible="state not in ['sale', 'done']"
                     groups="rma.rma_group_user_own"
                 />
             </button>

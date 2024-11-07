@@ -5,6 +5,7 @@
 import logging
 from collections import defaultdict
 from itertools import groupby
+from markupsafe import Markup
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError, ValidationError
@@ -580,7 +581,7 @@ class Rma(models.Model):
         ctx = {
             "default_model": "rma",
             "default_subtype_id": self.env.ref("rma.mt_rma_notification").id,
-            "default_res_id": self.ids[0],
+            "default_res_ids": [self.ids[0]],
             "default_use_template": bool(template),
             "default_template_id": template and template.id or False,
             "default_composition_mode": "comment",
@@ -1115,12 +1116,13 @@ class Rma(models.Model):
             picking = rma.delivery_move_ids.picking_id.sorted("id", reverse=True)[0]
             pickings[picking] |= rma
             rma.message_post(
-                body=_(
+                body=Markup(_(
                     'Return: <a href="#" data-oe-model="stock.picking" '
                     'data-oe-id="%(id)d">%(name)s</a> has been created.'
                 )
                 % ({"id": picking.id, "name": picking.name})
-            )
+                )
+            )    
         for picking, rmas in pickings.items():
             picking.action_confirm()
             picking.action_assign()
@@ -1183,7 +1185,7 @@ class Rma(models.Model):
         # The product replacement could explode into several moves like in the case of
         # MRP BoM Kits
         for new_move in new_moves:
-            body += (
+            body += Markup(
                 _(
                     'Replacement: Move <a href="#" data-oe-model="stock.move"'
                     ' data-oe-id="%(move_id)d">%(move_name)s</a> (Picking <a'
@@ -1209,7 +1211,7 @@ class Rma(models.Model):
         self.ensure_one()
         self.message_post(
             body=body
-            or _(
+            or Markup(_(
                 "Replacement:<br/>"
                 'Product <a href="#" data-oe-model="product.product" '
                 'data-oe-id="%(id)d">%(name)s</a><br/>'
@@ -1224,7 +1226,7 @@ class Rma(models.Model):
                     "qty": qty,
                     "uom": uom.name,
                 }
-            )
+            ))
         )
 
     # Mail business methods
