@@ -378,7 +378,7 @@ class Rma(models.Model):
         for r in self:
             if r.product_uom_qty > 1 and (
                 (r.state == "waiting_return" and r.remaining_qty > 0)
-                or (r.state == "waiting_replacement" and r.remaining_qty_to_done > 0)
+                or (r.state == "waiting_replacement" and r.remaining_qty > 0)
             ):
                 r.can_be_split = True
             else:
