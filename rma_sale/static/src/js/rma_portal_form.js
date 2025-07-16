@@ -31,7 +31,7 @@ publicWidget.registry.PortalRmaSale = publicWidget.Widget.extend({
         // We'll build an object that will ease the form check. It could be further
         // extended with additional checks.
         this.rows = {};
-        _.each(ids, (id) => {
+        ids.forEach((id) => {
             this.rows[id] = {
                 $comment: this.$(`#comment-${id}`),
                 $comment_input: this.$(`[name='${id}-description']`),
