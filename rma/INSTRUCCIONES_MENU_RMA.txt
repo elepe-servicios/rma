@@ -1,0 +1,100 @@
+=== INSTRUCCIONES PARA QUE APAREZCA EL MENÚ RMA ===
+
+CAMBIOS REALIZADOS (ACTUALIZADO - 2026-03-02 - VERSIÓN FINAL):
+1. Se corrigió el archivo menus.xml para definir correctamente el menú principal RMA
+2. Se agregó en rma_views.xml el enlace entre la acción y el menú después de la definición de la acción
+3. *** NUEVO *** Se agregaron grupos de acceso (groups) a todos los menuitems en menus.xml
+4. *** NUEVO *** Se modificó el post_init_hook en hooks.py para asignar automáticamente
+   el grupo "RMA Manager" a los usuarios administradores
+5. *** CRÍTICO - CORRECCIÓN FINAL *** hooks.py usa la API correcta de Odoo 19:
+   - Usar has_group() para verificar
+   - Usar group.write({"users": [...]}) para asignar
+
+PROBLEMA IDENTIFICADO:
+El menú RMA no aparecía porque:
+1. Los menuitems no tenían grupos de acceso asignados
+2. El hook usaba APIs obsoletas (groups_id, groups)
+3. SOLUCIÓN: has_group() + escribir en el grupo (no en el usuario)
+
+PASOS PARA SOLUCIONAR (IMPORTANTE - SEGUIR EN ORDEN):
+
+1. Ve a Odoo en tu navegador web
+
+2. Activa el Modo Desarrollador (si no está activo):
+   - Settings > General Settings
+   - Busca "Developer Tools" al final de la página
+   - Haz clic en "Activate the developer mode"
+
+3. DESINSTALA completamente el módulo RMA:
+   - Ve a Apps (Aplicaciones)
+   - Quita el filtro "Apps" de la búsqueda (haz clic en la X del filtro)
+   - Busca "RMA" o "Return Merchandise Authorization"
+   - Haz clic en el botón "Uninstall" (Desinstalar)
+   - Confirma la desinstalación
+
+4. LIMPIA la caché del navegador:
+   - Presiona Ctrl+Shift+Delete
+   - Marca "Cached images and files" (Imágenes y archivos en caché)
+   - Haz clic en "Clear data" o "Borrar datos"
+   - O simplemente presiona Ctrl+F5 varias veces
+
+5. REINSTALA el módulo RMA:
+   - Ve nuevamente a Apps (Aplicaciones)
+   - Busca "RMA"
+   - Haz clic en el botón "Install" (Instalar)
+   - Espera a que termine la instalación
+
+6. VERIFICA que tu usuario tenga los permisos correctos:
+   - Settings > Users & Companies > Users
+   - Encuentra tu usuario y haz clic en él
+   - Ve a la pestaña "Access Rights"
+   - Busca la sección "RMA"
+   - Debería aparecer automáticamente marcado como "Manager" si eres admin
+   - Si no aparece, marca manualmente uno de estos niveles:
+     * "Manager" - Para acceso completo incluyendo configuración
+     * "User: All Documents" - Para ver todos los RMAs
+     * "User: Own Documents Only" - Para ver solo tus propios RMAs
+
+7. CIERRA SESIÓN y vuelve a iniciar sesión en Odoo
+   - Esto es importante para que los nuevos grupos de acceso se apliquen
+   - Haz clic en tu nombre de usuario (esquina superior derecha)
+   - Selecciona "Log out"
+   - Vuelve a iniciar sesión
+
+8. Refresca el navegador (F5 o Ctrl+F5)
+
+RESULTADO ESPERADO:
+- Deberías ver un menú "RMA" en la barra de navegación principal
+- Al hacer clic, verás:
+  * Orders - Lista de RMAs
+  * Reporting - Reportes
+  * Configuration - Configuración (solo para Manager)
+
+SOLUCIÓN ALTERNATIVA SI AÚN NO APARECE:
+Si después de seguir todos los pasos anteriores el menú aún no aparece:
+
+1. Asigna manualmente el grupo RMA a tu usuario:
+   - Ve a Settings > Users & Companies > Users
+   - Selecciona tu usuario
+   - Pestaña "Access Rights"
+   - En la sección "Technical Settings" activa "Access Rights"
+   - Busca y activa manualmente los grupos:
+     * RMA / Manager
+     * RMA / User: All Documents
+
+2. Reinicia el servidor de Odoo (si tienes acceso):
+   - Esto fuerza la recarga de todos los módulos y menús
+
+3. Verifica en la base de datos directamente (modo desarrollador avanzado):
+   - Settings > Technical > User Interface > Menu Items
+   - Busca "RMA"
+   - Verifica que exista el menú y que tenga grupos asignados
+   - Si no tiene grupos, edítalo y agrega: rma_group_user_own,rma_group_user_all,rma_group_manager
+
+NOTA TÉCNICA:
+Los cambios principales fueron:
+- menus.xml: Agregado atributo groups="..." a todos los menuitem
+- hooks.py: Agregado código para asignar automáticamente RMA Manager a usuarios admin
+- El post_init_hook solo se ejecuta durante la INSTALACIÓN, no durante ACTUALIZACIÓN
+
+Por eso es crítico DESINSTALAR y REINSTALAR, no solo actualizar.

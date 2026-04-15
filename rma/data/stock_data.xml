@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<data noupdate="1">
+    <record id="stock_location_rma" model="stock.location">
+        <field name="name">RMA</field>
+        <!-- NOTE: stock.stock_location_locations was removed in Odoo 19 -->
+        <!-- location_id is not set here, it will be set by warehouse creation hook -->
+        <field name="usage">view</field>
+        <field name="company_id" />
+    </record>
+</data>

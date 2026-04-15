@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Copyright 2020 Tecnativa - Ernesto Tejeda
+     License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl). -->
+<odoo>
+    <!-- Main RMA Menu - visible to users with any RMA group -->
+    <menuitem
+        id="rma_menu"
+        name="RMA"
+        web_icon="rma,static/description/icon.png"
+        sequence="10"
+        groups="rma_group_user_own,rma_group_user_all,rma_group_manager"
+    />
+    <menuitem
+        id="rma_orders_menu"
+        parent="rma_menu"
+        name="Orders"
+        sequence="10"
+        groups="rma_group_user_own,rma_group_user_all,rma_group_manager"
+    />
+    <menuitem
+        id="rma_reporting_menu"
+        parent="rma_menu"
+        name="Reporting"
+        sequence="20"
+        groups="rma_group_user_all,rma_group_manager"
+    />
+    <menuitem
+        id="rma_configuration_menu"
+        parent="rma_menu"
+        name="Configuration"
+        sequence="30"
+        groups="rma_group_manager"
+    />
+</odoo>
