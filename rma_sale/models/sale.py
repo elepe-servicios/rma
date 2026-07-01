@@ -112,7 +112,7 @@ class SaleOrderLine(models.Model):
             lambda r: (
                 self == r.sale_line_id
                 and r.state == "done"
-                and not r.scrapped
+                and not getattr(r, "scrapped", False)
                 and r.location_dest_id.usage == "customer"
                 and (
                     not r.origin_returned_move_id
