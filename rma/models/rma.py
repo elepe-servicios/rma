@@ -726,23 +726,46 @@ class Rma(models.Model):
             "name": self and ", ".join(self.mapped("name")) or False,
         }
 
+    def _get_procurement_group_model(self):
+        """Return procurement.group model if available in this Odoo version."""
+        if "procurement.group" in self.env.registry.models:
+            return self.env["procurement.group"]
+        return False
+
+    def _has_procurement_group_field(self):
+        """Check if RMA model still has procurement_group_id field."""
+        return "procurement_group_id" in self._fields
+
+    def _get_rma_procurement_group(self):
+        """Return current record procurement group when field/model exist."""
+        self.ensure_one()
+        if not self._has_procurement_group_field():
+            return False
+        return self.procurement_group_id
+
     def _prepare_common_procurement_vals(
         self, warehouse=None, scheduled_date=None, group=None
     ):
         self.ensure_one()
-        group = group or self.procurement_group_id
-        if not group:
-            group = self.env["procurement.group"].create(
-                self._prepare_procurement_group_vals()
-            )
-        return {
+        group_model = self._get_procurement_group_model()
+        group = group or self._get_rma_procurement_group()
+        if group_model and not group:
+            group = group_model.create(self._prepare_procurement_group_vals())
+        vals = {
             "company_id": self.company_id,
-            "group_id": group,
             "date_planned": scheduled_date or fields.Datetime.now(),
             "warehouse_id": warehouse or self.warehouse_id,
-            "partner_id": group.partner_id.id,
+            "partner_id": self.partner_shipping_id.id,
             "priority": self.priority,
         }
+        if group:
+            vals.update(
+                {
+                    "group_id": group,
+                    "partner_id": group.partner_id.id,
+                }
+            )
+        return vals
 
     def _prepare_reception_procurement_vals(self, group=None):
         """This method is used only for reception and a specific RMA IN route."""
@@ -758,12 +781,14 @@ class Rma(models.Model):
 
     def _prepare_reception_procurements(self):
         procurements = []
-        group_model = self.env["procurement.group"]
+        group_model = self._get_procurement_group_model()
+        if not group_model:
+            return procurements
         for rma in self:
             if not rma.product_id.is_storable:
                 continue
-            group = rma.procurement_group_id
-            if not group:
+            group = rma._get_rma_procurement_group()
+            if not group and group_model:
                 group = group_model.create(rma._prepare_procurement_group_vals())
             product = self.product_id
             if self.different_return_product:
@@ -791,13 +816,65 @@ class Rma(models.Model):
         return procurements
 
     def _create_receipt(self):
-        procurements = self._prepare_reception_procurements()
-        if procurements:
-            self.env["procurement.group"].run(procurements)
-        self.reception_move_id.picking_id.action_assign()
-        if self.operation_id.auto_confirm_reception:
-            self.reception_move_id.picked = True
-            self.reception_move_id._action_done()
+        """Create a receipt picking for the RMA.
+        In Odoo 19, procurement.group was removed, so we create the picking directly.
+        """
+        for rma in self:
+            # Only create receipt if product is storable
+            if not rma.product_id.is_storable:
+                continue
+
+            # Skip if reception move already exists
+            if rma.reception_move_id:
+                continue
+
+            # Get the RMA route
+            route = rma.warehouse_id.rma_in_route_id
+
+            # Create the picking
+            picking_type = rma.warehouse_id.in_type_id
+            picking_vals = {
+                'picking_type_id': picking_type.id,
+                'location_id': rma.partner_shipping_id.property_stock_customer.id,
+                'location_dest_id': rma.location_id.id,
+                'origin': rma.name,
+                'move_ids': [],
+            }
+
+            # Create the move
+            move_vals = {
+                'name': rma.product_id.display_name,
+                'product_id': rma.product_id.id,
+                'product_uom_qty': rma.product_uom_qty,
+                'product_uom': rma.product_uom.id,
+                'location_id': rma.partner_shipping_id.property_stock_customer.id,
+                'location_dest_id': rma.location_id.id,
+                'company_id': rma.company_id.id,
+                'rma_receiver_ids': [(6, 0, rma.ids)],
+            }
+
+            if rma.move_id and not rma.operation_id.different_return_product:
+                move_vals['move_orig_ids'] = [(6, 0, rma.move_id.ids)]
+
+            if route:
+                move_vals['route_ids'] = [(6, 0, route.ids)]
+
+            picking_vals['move_ids'].append((0, 0, move_vals))
+
+            # Create picking with moves
+            picking = self.env['stock.picking'].create(picking_vals)
+            picking.action_confirm()
+            picking.action_assign()
+
+            # Assign the reception_move_id to the RMA
+            if picking.move_ids:
+                rma.reception_move_id = picking.move_ids[0]
+
+            # Auto-confirm reception if needed
+            if rma.operation_id.auto_confirm_reception:
+                for move in picking.move_ids:
+                    move.picked = True
+                picking.button_validate()
 
     def action_create_receipt(self):
         self.ensure_one()
@@ -1227,6 +1304,9 @@ class Rma(models.Model):
         """Groups the given rmas by the returned key from _get_reception_group_key
         by setting the procurement_group_id on the each rma if there is not yet on
          set"""
+        group_model = self._get_procurement_group_model()
+        if not group_model or not self._has_procurement_group_field():
+            return
         grouped_rmas = groupby(
             sorted(self, key=lambda rma: rma._get_reception_group_key()),
             key=lambda rma: [rma._get_reception_group_key()],
@@ -1235,9 +1315,7 @@ class Rma(models.Model):
             rmas = self.browse().concat(*list(rmas))
             if not rmas:
                 continue
-            proc_group = self.env["procurement.group"].create(
-                rmas._prepare_procurement_group_vals()
-            )
+            proc_group = group_model.create(rmas._prepare_procurement_group_vals())
             rmas.write({"procurement_group_id": proc_group.id})
 
     def _assign_delivery_procurement_group(self):
@@ -1245,6 +1323,9 @@ class Rma(models.Model):
         by setting the procurement_group_id on the each rma if there is not yet on
         set"""
         if not self._delivery_should_be_grouped():
+            return
+        group_model = self._get_procurement_group_model()
+        if not group_model or not self._has_procurement_group_field():
             return
         grouped_rmas = groupby(
             sorted(self, key=lambda rma: rma._get_delivery_group_key()),
@@ -1254,9 +1335,7 @@ class Rma(models.Model):
             rmas = self.browse().concat(*list(rmas))
             if not rmas:
                 continue
-            proc_group = self.env["procurement.group"].create(
-                rmas._prepare_procurement_group_vals()
-            )
+            proc_group = group_model.create(rmas._prepare_procurement_group_vals())
             rmas.write({"procurement_group_id": proc_group.id})
 
     def _prepare_delivery_procurement_vals(self, scheduled_date=None):
@@ -1278,15 +1357,18 @@ class Rma(models.Model):
     def _prepare_delivery_procurements(self, scheduled_date=None, qty=None, uom=None):
         self._assign_delivery_procurement_group()
         procurements = []
-        group_model = self.env["procurement.group"]
+        group_model = self._get_procurement_group_model()
+        if not group_model:
+            return procurements
         for rma in self:
-            if not rma.procurement_group_id:
-                rma.procurement_group_id = group_model.create(
-                    rma._prepare_procurement_group_vals()
-                )
+            group = rma._get_rma_procurement_group()
+            if not group and group_model:
+                group = group_model.create(rma._prepare_procurement_group_vals())
+                if rma._has_procurement_group_field():
+                    rma.procurement_group_id = group
 
             vals = rma._prepare_delivery_procurement_vals(scheduled_date)
-            group = vals.get("group_id")
+            group = vals.get("group_id") or group
             procurements.append(
                 group_model.Procurement(
                     rma.product_id,
@@ -1303,21 +1385,61 @@ class Rma(models.Model):
 
     # Returning business methods
     def create_return(self, scheduled_date, qty=None, uom=None):
-        """Intended to be invoked by the delivery wizard"""
+        """Intended to be invoked by the delivery wizard.
+        In Odoo 19, creates pickings directly without using procurement.group.
+        """
         self._ensure_can_be_returned()
         self._ensure_qty_to_return(qty, uom)
         rmas_to_return = self.filtered(
             lambda rma: rma.can_be_returned and rma.product_id.is_storable
         )
-        procurements = rmas_to_return._prepare_delivery_procurements(
-            scheduled_date, qty, uom
-        )
-        if procurements:
-            self.env["procurement.group"].run(procurements)
+
         pickings = defaultdict(lambda: self.browse())
+
         for rma in rmas_to_return:
-            picking = rma.delivery_move_ids.picking_id.sorted("id", reverse=True)[0]
+            # Get the warehouse and route
+            warehouse = rma.warehouse_id
+            picking_type = warehouse.out_type_id  # Outgoing type for return to customer
+            route = warehouse.rma_out_route_id
+
+            # Create the picking for return
+            picking_vals = {
+                'picking_type_id': picking_type.id,
+                'location_id': rma.location_id.id,
+                'location_dest_id': rma.partner_shipping_id.property_stock_customer.id,
+                'origin': rma.name,
+                'scheduled_date': scheduled_date,
+                'move_ids': [],
+            }
+
+            # Create the move for return
+            move_qty = qty or rma.remaining_qty
+            move_uom = uom or rma.product_uom
+
+            move_vals = {
+                'name': rma.product_id.display_name,
+                'product_id': rma.product_id.id,
+                'product_uom_qty': move_qty,
+                'product_uom': move_uom.id,
+                'location_id': rma.location_id.id,
+                'location_dest_id': rma.partner_shipping_id.property_stock_customer.id,
+                'company_id': rma.company_id.id,
+                'rma_id': rma.id,
+            }
+
+            # Link to reception move if it exists
+            if rma.reception_move_id:
+                move_vals['move_orig_ids'] = [(6, 0, rma.reception_move_id.ids)]
+
+            if route:
+                move_vals['route_ids'] = [(6, 0, route.ids)]
+
+            picking_vals['move_ids'].append((0, 0, move_vals))
+
+            # Create the picking
+            picking = self.env['stock.picking'].create(picking_vals)
             pickings[picking] |= rma
+
             rma.message_post(
                 body=Markup(
                     self.env._(
@@ -1327,6 +1449,8 @@ class Rma(models.Model):
                     % ({"id": picking.id, "name": picking.name})
                 )
             )
+
+        # Confirm and assign all pickings
         for picking, rmas in pickings.items():
             picking.action_confirm()
             picking.action_assign()
@@ -1335,6 +1459,7 @@ class Rma(models.Model):
                 render_values={"self": picking, "origin": rmas},
                 subtype_id=self.env["ir.model.data"]._xmlid_to_res_id("mail.mt_note"),
             )
+
         rmas_to_return.write({"state": "waiting_return"})
 
     def _prepare_replace_procurement_vals(self, warehouse=None, scheduled_date=None):
@@ -1349,18 +1474,21 @@ class Rma(models.Model):
         self, warehouse, scheduled_date, product, qty, uom
     ):
         procurements = []
-        group_model = self.env["procurement.group"]
+        group_model = self._get_procurement_group_model()
+        if not group_model:
+            return procurements
         for rma in self:
             if not product.is_storable:
                 continue
 
-            if not rma.procurement_group_id:
-                rma.procurement_group_id = group_model.create(
-                    rma._prepare_procurement_group_vals()
-                )
+            group = rma._get_rma_procurement_group()
+            if not group and group_model:
+                group = group_model.create(rma._prepare_procurement_group_vals())
+                if rma._has_procurement_group_field():
+                    rma.procurement_group_id = group
 
             vals = rma._prepare_replace_procurement_vals(warehouse, scheduled_date)
-            group = vals.get("group_id")
+            group = vals.get("group_id") or group
             procurements.append(
                 group_model.Procurement(
                     product,
@@ -1377,45 +1505,88 @@ class Rma(models.Model):
 
     # Replacing business methods
     def create_replace(self, scheduled_date, warehouse, product, qty, uom):
-        """Intended to be invoked by the delivery wizard"""
+        """Intended to be invoked by the delivery wizard.
+        In Odoo 19, creates pickings directly without using procurement.group.
+        """
         self._ensure_can_be_replaced()
-        moves_before = self.delivery_move_ids
-        procurements = self._prepare_replace_procurements(
-            warehouse, scheduled_date, product, qty, uom
-        )
-        if procurements:
-            self.env["procurement.group"].run(procurements)
-        new_moves = self.delivery_move_ids - moves_before
+
+        new_moves = self.env['stock.move']
         body = ""
-        # The product replacement could explode into several moves like in the case of
-        # MRP BoM Kits
-        for new_move in new_moves:
-            body += Markup(
-                self.env._(
-                    'Replacement: Move <a href="#" data-oe-model="stock.move"'
-                    ' data-oe-id="%(move_id)d">%(move_name)s</a> (Picking <a'
-                    ' href="#" data-oe-model="stock.picking"'
-                    ' data-oe-id="%(picking_id)d"> %(picking_name)s</a>) has'
-                    " been created."
+
+        for rma in self:
+            if not product.is_storable:
+                continue
+
+            # Get warehouse configuration
+            warehouse = warehouse or rma.warehouse_id
+            picking_type = warehouse.out_type_id  # Outgoing type for replacement delivery
+            route = warehouse.rma_out_replace_route_id
+
+            # Create the picking
+            picking_vals = {
+                'picking_type_id': picking_type.id,
+                'location_id': rma.location_id.id,
+                'location_dest_id': rma._get_location_final().id,
+                'origin': rma.name,
+                'scheduled_date': scheduled_date,
+                'move_ids': [],
+            }
+
+            # Create the move
+            move_vals = {
+                'name': product.display_name,
+                'product_id': product.id,
+                'product_uom_qty': qty,
+                'product_uom': uom.id,
+                'location_id': rma.location_id.id,
+                'location_dest_id': rma._get_location_final().id,
+                'company_id': rma.company_id.id,
+                'rma_id': rma.id,
+            }
+
+            if route:
+                move_vals['route_ids'] = [(6, 0, route.ids)]
+
+            picking_vals['move_ids'].append((0, 0, move_vals))
+
+            # Create the picking
+            picking = self.env['stock.picking'].create(picking_vals)
+            picking.action_confirm()
+            picking.action_assign()
+
+            # Track the new moves for messaging
+            for move in picking.move_ids:
+                new_moves |= move
+                body += Markup(
+                    self.env._(
+                        'Replacement: Move <a href="#" data-oe-model="stock.move"'
+                        ' data-oe-id="%(move_id)d">%(move_name)s</a> (Picking <a'
+                        ' href="#" data-oe-model="stock.picking"'
+                        ' data-oe-id="%(picking_id)d"> %(picking_name)s</a>) has'
+                        " been created."
+                    )
+                    % (
+                        {
+                            "move_id": move.id,
+                            "move_name": move.display_name,
+                            "picking_id": picking.id,
+                            "picking_name": picking.name,
+                        }
+                    )
+                    + "\n"
                 )
-                % (
-                    {
-                        "move_id": new_move.id,
-                        "move_name": new_move.display_name,
-                        "picking_id": new_move.picking_id.id,
-                        "picking_name": new_move.picking_id.name,
-                    }
-                )
-                + "\n"
-            )
+
+        # Add messages and post source links
         for rma in self:
             rma._add_replace_message(body, qty, uom)
+
         for picking in new_moves.picking_id:
             picking.message_post_with_source(
                 "mail.message_origin_link",
                 render_values={"self": picking, "origin": self},
                 subtype_id=self.env["ir.model.data"]._xmlid_to_res_id("mail.mt_note"),
             )
+
         self.write({"state": "waiting_replacement"})
 
     def _add_replace_message(self, body, qty, uom):
@@ -1503,15 +1674,8 @@ class Rma(models.Model):
         self_with_context = self.with_context(mail_post_autofollow=True)
         return super(Rma, self_with_context).message_post(**kwargs)
 
-    def _message_get_suggested_recipients(self):
-        recipients = super()._message_get_suggested_recipients()
-        try:
-            for record in self.filtered("partner_id"):
-                record._message_add_suggested_recipient(
-                    recipients, partner=record.partner_id, reason=self.env._("Customer")
-                )
-        except AccessError as e:  # no read access rights
-            _logger.debug(e)
+    def _message_get_suggested_recipients(self, **kwargs):
+        recipients = super()._message_get_suggested_recipients(**kwargs)
         return recipients
 
     # Reporting business methods
