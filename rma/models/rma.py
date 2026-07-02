@@ -843,7 +843,6 @@ class Rma(models.Model):
 
             # Create the move
             move_vals = {
-                'name': rma.product_id.display_name,
                 'product_id': rma.product_id.id,
                 'product_uom_qty': rma.product_uom_qty,
                 'product_uom': rma.product_uom.id,
@@ -1417,7 +1416,6 @@ class Rma(models.Model):
             move_uom = uom or rma.product_uom
 
             move_vals = {
-                'name': rma.product_id.display_name,
                 'product_id': rma.product_id.id,
                 'product_uom_qty': move_qty,
                 'product_uom': move_uom.id,
@@ -1534,7 +1532,6 @@ class Rma(models.Model):
 
             # Create the move
             move_vals = {
-                'name': product.display_name,
                 'product_id': product.id,
                 'product_uom_qty': qty,
                 'product_uom': uom.id,
